@@ -9,10 +9,12 @@ namespace GameServer;
 public class WebSocketHandler
 {
     private readonly ConnectionManager _connectionManager;
+    private readonly MessageRouter _messageRouter;
     
     public WebSocketHandler(ConnectionManager connectionManager)
     {
         _connectionManager = connectionManager;
+        _messageRouter = new MessageRouter(connectionManager);
     }
     
     public async Task HandleConnectionAsync(WebSocket webSocket)
@@ -49,18 +51,8 @@ public class WebSocketHandler
                         var envelope = JsonSerializer.Deserialize<MessageEnvelope>(json);
                         if (envelope != null)
                         {
-                            // TODO: Phase 4 - Route to appropriate message handler
-                            var response = new MessageEnvelope
-                            {
-                                Type = MessageType.Error,
-                                Payload = JsonSerializer.Serialize(new ErrorMessage
-                                {
-                                    Code = "NOT_IMPLEMENTED",
-                                    Message = "Message handlers not yet implemented",
-                                    RequestId = envelope.RequestId
-                                }),
-                                RequestId = envelope.RequestId
-                            };
+                            // Route message to appropriate handler
+                            var response = await _messageRouter.RouteMessageAsync(envelope, currentPlayerId);
                             
                             var responseJson = JsonSerializer.Serialize(response);
                             var responseBytes = Encoding.UTF8.GetBytes(responseJson);
