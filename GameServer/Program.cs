@@ -1,3 +1,4 @@
+using GameServer;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +16,9 @@ builder.WebHost.ConfigureKestrel(options =>
     options.ListenLocalhost(8080);
 });
 
+// Register services
+builder.Services.AddSingleton<ConnectionManager>();
+
 var app = builder.Build();
 
 app.UseSerilogRequestLogging();
@@ -26,13 +30,9 @@ app.Map("/ws", async context =>
     if (context.WebSockets.IsWebSocketRequest)
     {
         var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        Log.Information("WebSocket connection established");
-        
-        // TODO: Phase 3 - Implement WebSocketHandler for message loop
-        await webSocket.CloseAsync(
-            System.Net.WebSockets.WebSocketCloseStatus.NormalClosure,
-            "Connection established - handler not yet implemented",
-            CancellationToken.None);
+        var connectionManager = context.RequestServices.GetRequiredService<ConnectionManager>();
+        var handler = new WebSocketHandler(connectionManager);
+        await handler.HandleConnectionAsync(webSocket);
     }
     else
     {
