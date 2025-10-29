@@ -1,4 +1,6 @@
+using System.Net.WebSockets;
 using System.Text.Json;
+using GameServer.MessageHandlers;
 using Serilog;
 using Shared;
 
@@ -7,13 +9,15 @@ namespace GameServer;
 public class MessageRouter
 {
     private readonly ConnectionManager _connectionManager;
+    private readonly LoginHandler _loginHandler;
     
     public MessageRouter(ConnectionManager connectionManager)
     {
         _connectionManager = connectionManager;
+        _loginHandler = new LoginHandler(connectionManager);
     }
     
-    public async Task<MessageEnvelope> RouteMessageAsync(MessageEnvelope envelope, string? currentPlayerId)
+    public async Task<MessageEnvelope> RouteMessageAsync(MessageEnvelope envelope, string? currentPlayerId, WebSocket webSocket)
     {
         try
         {
@@ -21,7 +25,7 @@ public class MessageRouter
             
             return envelope.Type switch
             {
-                MessageType.Login => await HandleLoginAsync(envelope),
+                MessageType.Login => await HandleLoginAsync(envelope, webSocket),
                 MessageType.UpdateResources => await HandleUpdateResourcesAsync(envelope, currentPlayerId),
                 MessageType.SendGift => await HandleSendGiftAsync(envelope, currentPlayerId),
                 _ => CreateErrorResponse("UNKNOWN_MESSAGE_TYPE", 
@@ -38,13 +42,41 @@ public class MessageRouter
         }
     }
     
-    private async Task<MessageEnvelope> HandleLoginAsync(MessageEnvelope envelope)
+    private async Task<MessageEnvelope> HandleLoginAsync(MessageEnvelope envelope, WebSocket webSocket)
     {
-        // TODO: Phase 5 - Implement login handler
-        await Task.CompletedTask;
-        return CreateErrorResponse("NOT_IMPLEMENTED", 
-            "Login handler not yet implemented", 
-            envelope.RequestId);
+        try
+        {
+            var request = JsonSerializer.Deserialize<LoginRequest>(envelope.Payload);
+            if (request == null)
+            {
+                return CreateErrorResponse("INVALID_REQUEST", 
+                    "Invalid login request format", 
+                    envelope.RequestId);
+            }
+            
+            var response = await _loginHandler.HandleAsync(request, webSocket);
+            
+            if (!response.Success)
+            {
+                return CreateErrorResponse("LOGIN_FAILED", 
+                    "Login failed - device already connected or invalid request", 
+                    envelope.RequestId);
+            }
+            
+            return new MessageEnvelope
+            {
+                Type = MessageType.LoginResponse,
+                Payload = JsonSerializer.Serialize(response),
+                RequestId = envelope.RequestId
+            };
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Error handling login");
+            return CreateErrorResponse("LOGIN_ERROR", 
+                "Error processing login request", 
+                envelope.RequestId);
+        }
     }
     
     private async Task<MessageEnvelope> HandleUpdateResourcesAsync(MessageEnvelope envelope, string? currentPlayerId)

@@ -52,7 +52,18 @@ public class WebSocketHandler
                         if (envelope != null)
                         {
                             // Route message to appropriate handler
-                            var response = await _messageRouter.RouteMessageAsync(envelope, currentPlayerId);
+                            var response = await _messageRouter.RouteMessageAsync(envelope, currentPlayerId, webSocket);
+                            
+                            // Track playerId after successful login
+                            if (envelope.Type == MessageType.Login && response.Type == MessageType.LoginResponse)
+                            {
+                                var loginResponse = JsonSerializer.Deserialize<LoginResponse>(response.Payload);
+                                if (loginResponse?.Success == true)
+                                {
+                                    currentPlayerId = loginResponse.PlayerId;
+                                    Log.Information("Player authenticated: {PlayerId}", currentPlayerId);
+                                }
+                            }
                             
                             var responseJson = JsonSerializer.Serialize(response);
                             var responseBytes = Encoding.UTF8.GetBytes(responseJson);
