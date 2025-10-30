@@ -11,12 +11,14 @@ public class MessageRouter
     private readonly ConnectionManager _connectionManager;
     private readonly LoginHandler _loginHandler;
     private readonly ResourceHandler _resourceHandler;
+    private readonly GiftHandler _giftHandler;
     
     public MessageRouter(ConnectionManager connectionManager)
     {
         _connectionManager = connectionManager;
         _loginHandler = new LoginHandler(connectionManager);
         _resourceHandler = new ResourceHandler(connectionManager);
+        _giftHandler = new GiftHandler(connectionManager);
     }
     
     public async Task<MessageEnvelope> RouteMessageAsync(MessageEnvelope envelope, string? currentPlayerId, WebSocket webSocket)
@@ -135,11 +137,53 @@ public class MessageRouter
     
     private async Task<MessageEnvelope> HandleSendGiftAsync(MessageEnvelope envelope, string? currentPlayerId)
     {
-        // TODO: Phase 7 - Implement send gift handler
-        await Task.CompletedTask;
-        return CreateErrorResponse("NOT_IMPLEMENTED", 
-            "SendGift handler not yet implemented", 
-            envelope.RequestId);
+        // Require authentication
+        if (string.IsNullOrEmpty(currentPlayerId))
+        {
+            Log.Warning("SendGift rejected - player not authenticated");
+            return CreateErrorResponse("NOT_AUTHENTICATED", 
+                "You must login first", 
+                envelope.RequestId);
+        }
+        
+        Log.Information("SendGift called by authenticated player: {PlayerId}", currentPlayerId);
+        
+        try
+        {
+            var request = JsonSerializer.Deserialize<SendGiftRequest>(envelope.Payload);
+            if (request == null)
+            {
+                return CreateErrorResponse("INVALID_REQUEST", 
+                    "Invalid send gift request format", 
+                    envelope.RequestId);
+            }
+            
+            // Ensure player is sending from their own account
+            request.SenderId = currentPlayerId;
+            
+            var response = await _giftHandler.HandleAsync(request);
+            
+            if (!response.Success)
+            {
+                return CreateErrorResponse("GIFT_FAILED", 
+                    "Gift failed - insufficient balance, invalid recipient, or invalid amount", 
+                    envelope.RequestId);
+            }
+            
+            return new MessageEnvelope
+            {
+                Type = MessageType.SendGiftResponse,
+                Payload = JsonSerializer.Serialize(response),
+                RequestId = envelope.RequestId
+            };
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Error handling send gift");
+            return CreateErrorResponse("GIFT_ERROR", 
+                "Error processing send gift request", 
+                envelope.RequestId);
+        }
     }
     
     private static MessageEnvelope CreateErrorResponse(string code, string message, string? requestId)
