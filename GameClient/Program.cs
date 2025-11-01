@@ -1,4 +1,5 @@
-﻿using Serilog;
+﻿using GameClient;
+using Serilog;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -9,12 +10,21 @@ Log.Logger = new LoggerConfiguration()
 try
 {
     Log.Information("Game Client starting...");
-    Log.Information("Game Client ready. Implementation coming in Phase 8.");
-    Log.Information("Connect to: ws://localhost:8080/ws");
+    
+    using var client = new WebSocketClient("ws://localhost:8080/ws");
+    await client.ConnectAsync();
+    
+    var cli = new CommandLineInterface(client);
+    await cli.RunAsync();
+    
+    await client.DisconnectAsync();
+    
+    Log.Information("Game Client stopped");
 }
 catch (Exception ex)
 {
     Log.Fatal(ex, "Game Client terminated unexpectedly");
+    Console.WriteLine($"Fatal error: {ex.Message}");
 }
 finally
 {
