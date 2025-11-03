@@ -28,14 +28,41 @@ public class LoginHandler : ILoginHandler
             };
         }
         
-        // Check if device is already connected
-        if (_connectionManager.IsDeviceConnected(request.DeviceId))
+        // Check if device already has a player (reconnection scenario)
+        var existingPlayer = _connectionManager.GetPlayerByDeviceId(request.DeviceId);
+        
+        if (existingPlayer != null)
         {
-            Log.Warning("Login rejected - DeviceId already connected: {DeviceId}", request.DeviceId);
+            // Reconnection: update WebSocket and return existing PlayerId
+            var existingSocket = existingPlayer.GetWebSocket();
+            if (existingSocket != null && existingSocket.State == System.Net.WebSockets.WebSocketState.Open)
+            {
+                // Player is already connected with an active WebSocket
+                Log.Warning("Login rejected - DeviceId already connected: {DeviceId}", request.DeviceId);
+                return new LoginResponse
+                {
+                    Success = false,
+                    PlayerId = string.Empty
+                };
+            }
+            
+            // Player was disconnected, reconnect them
+            var setSuccess = await existingPlayer.TrySetWebSocketAsync(webSocket);
+            if (!setSuccess)
+            {
+                Log.Warning("Failed to reconnect player {PlayerId} - lock timeout when setting WebSocket", existingPlayer.PlayerId);
+                return new LoginResponse
+                {
+                    Success = false,
+                    PlayerId = string.Empty
+                };
+            }
+            Log.Information("Player reconnected: {PlayerId} with DeviceId: {DeviceId}", existingPlayer.PlayerId, request.DeviceId);
+            
             return new LoginResponse
             {
-                Success = false,
-                PlayerId = string.Empty
+                Success = true,
+                PlayerId = existingPlayer.PlayerId
             };
         }
         

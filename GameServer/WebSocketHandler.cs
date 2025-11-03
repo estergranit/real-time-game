@@ -94,8 +94,15 @@ public class WebSocketHandler
                 var player = _connectionManager.GetPlayerByPlayerId(currentPlayerId);
                 if (player != null)
                 {
-                    player.WebSocket = null;
-                    Log.Information("Player {PlayerId} disconnected but state preserved", currentPlayerId);
+                    var success = await player.TrySetWebSocketAsync(null);
+                    if (success)
+                    {
+                        Log.Information("Player {PlayerId} disconnected but state preserved", currentPlayerId);
+                    }
+                    else
+                    {
+                        Log.Warning("Failed to update WebSocket state for player {PlayerId} during disconnect - lock timeout", currentPlayerId);
+                    }
                 }
             }
             

@@ -21,10 +21,9 @@ public class ConnectionManager
     public string CreatePlayer(string deviceId, WebSocket webSocket)
     {
         var playerId = $"player_{Interlocked.Increment(ref _playerIdCounter)}";
-        var playerState = new PlayerState(playerId, deviceId)
-        {
-            WebSocket = webSocket
-        };
+        var playerState = new PlayerState(playerId, deviceId);
+        // Use synchronous SetWebSocket during initialization - no contention possible yet
+        playerState.SetWebSocket(webSocket);
         
         _playersByDeviceId[deviceId] = playerState;
         _playersByPlayerId[playerId] = playerState;
@@ -56,7 +55,14 @@ public class ConnectionManager
     
     public async Task SendMessageAsync(PlayerState player, MessageEnvelope envelope)
     {
-        if (player.WebSocket == null || player.WebSocket.State != WebSocketState.Open)
+        var (success, webSocket) = await player.TryGetWebSocketAsync();
+        if (!success)
+        {
+            Log.Warning("Cannot send message to {PlayerId} - failed to acquire WebSocket lock", player.PlayerId);
+            return;
+        }
+        
+        if (webSocket == null || webSocket.State != WebSocketState.Open)
         {
             Log.Warning("Cannot send message to {PlayerId} - WebSocket not open", player.PlayerId);
             return;
@@ -66,7 +72,7 @@ public class ConnectionManager
         {
             var json = JsonSerializer.Serialize(envelope);
             var bytes = Encoding.UTF8.GetBytes(json);
-            await player.WebSocket.SendAsync(
+            await webSocket.SendAsync(
                 new ArraySegment<byte>(bytes),
                 WebSocketMessageType.Text,
                 true,
