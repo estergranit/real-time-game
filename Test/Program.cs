@@ -5,13 +5,17 @@ using GameServer.MessageHandlers;
 using Shared;
 using Serilog;
 
-// Test runner - use command line args: "gift" or "websocket" (default: gift)
+// Test runner - use command line args: "gift", "websocket", or "login" (default: gift)
 
 var testName = args.Length > 0 ? args[0].ToLower() : "gift";
 
 if (testName == "websocket" || testName == "ws")
 {
     await RunWebSocketConcurrencyTest();
+}
+else if (testName == "login")
+{
+    await RunLoginRaceConditionTest();
 }
 else
 {
@@ -259,6 +263,90 @@ static async Task RunGiftConcurrencyTest()
     }
 
     Console.WriteLine("PASS: Concurrency gift test succeeded.");
+}
+
+static async Task RunLoginRaceConditionTest()
+{
+    var connectionManager = new ConnectionManager();
+    var loginHandler = new LoginHandler(connectionManager);
+    
+    Console.WriteLine("==========================================");
+    Console.WriteLine("Login Race Condition Test");
+    Console.WriteLine("==========================================");
+    Console.WriteLine();
+    
+    const string deviceId = "device_race_test";
+    const int concurrentLoginAttempts = 50;
+    
+    Console.WriteLine($"Test Configuration:");
+    Console.WriteLine($"  - DeviceId: {deviceId}");
+    Console.WriteLine($"  - Concurrent login attempts: {concurrentLoginAttempts}");
+    Console.WriteLine();
+    Console.WriteLine("Running concurrent login attempts...");
+    
+    // First, create a player and disconnect them (set socket to null)
+    var initialSocket = new DummySocket();
+    var playerId = connectionManager.CreatePlayer(deviceId, initialSocket);
+    var player = connectionManager.GetPlayerByPlayerId(playerId)!;
+    await player.TrySetWebSocketAsync(null); // Disconnect
+    
+    // Now simulate multiple concurrent reconnection attempts
+    var loginTasks = new List<Task<LoginResponse>>();
+    for (int i = 0; i < concurrentLoginAttempts; i++)
+    {
+        var socket = new DummySocket();
+        loginTasks.Add(loginHandler.HandleAsync(new LoginRequest { DeviceId = deviceId }, socket));
+    }
+    
+    var results = await Task.WhenAll(loginTasks);
+    
+    // Count results
+    var successCount = results.Count(r => r.Success);
+    var failureCount = results.Count(r => !r.Success);
+    
+    Console.WriteLine();
+    Console.WriteLine("Results:");
+    Console.WriteLine($"  Successful logins: {successCount}");
+    Console.WriteLine($"  Failed logins: {failureCount}");
+    Console.WriteLine();
+    
+    // Verify only ONE login succeeded (the first one to acquire the lock)
+    if (successCount != 1)
+    {
+        Console.WriteLine($"FAIL: Expected exactly 1 successful login, got {successCount}");
+        Console.WriteLine("  This indicates a race condition - multiple threads overwrote each other's sockets");
+        Environment.Exit(1);
+    }
+    
+    // Verify the successful login has the correct PlayerId
+    var successfulLogin = results.First(r => r.Success);
+    if (successfulLogin.PlayerId != playerId)
+    {
+        Console.WriteLine($"FAIL: Successful login returned wrong PlayerId. Expected {playerId}, got {successfulLogin.PlayerId}");
+        Environment.Exit(2);
+    }
+    
+    // Verify the final socket state - should be set (not null)
+    var (getSuccess, finalSocket) = await player.TryGetWebSocketAsync();
+    if (!getSuccess)
+    {
+        Console.WriteLine("FAIL: Could not acquire lock to check final socket state");
+        Environment.Exit(3);
+    }
+    
+    if (finalSocket == null)
+    {
+        Console.WriteLine("FAIL: Final socket is null - reconnection did not set the socket");
+        Environment.Exit(4);
+    }
+    
+    Console.WriteLine("==========================================");
+    Console.WriteLine("✓ TEST PASSED");
+    Console.WriteLine($"  - Only 1 successful login out of {concurrentLoginAttempts} attempts");
+    Console.WriteLine($"  - All other attempts correctly rejected (already connected)");
+    Console.WriteLine($"  - Socket properly set during reconnection");
+    Console.WriteLine($"  - No race condition detected");
+    Console.WriteLine("==========================================");
 }
 
 class WebSocketTestResults

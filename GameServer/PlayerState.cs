@@ -134,6 +134,39 @@ public class PlayerState
         }
     }
     
+    /// <summary>
+    /// Atomically checks if WebSocket is null or closed, and sets it if so.
+    /// Returns (Success, WasSet) where Success=false means timeout, WasSet=true means socket was actually set.
+    /// This prevents race conditions where multiple threads try to reconnect simultaneously.
+    /// </summary>
+    public async Task<(bool Success, bool WasSet)> TrySetWebSocketIfNullOrClosedAsync(WebSocket? socket, CancellationToken cancellationToken = default)
+    {
+        const int timeoutMs = 200;
+        if (!await _webSocketSemaphore.WaitAsync(timeoutMs, cancellationToken))
+        {
+            Log.Warning("Timeout acquiring WebSocket lock (ConditionalSet) for player {PlayerId} after {TimeoutMs}ms - possible deadlock", 
+                PlayerId, timeoutMs);
+            return (false, false);
+        }
+        
+        try
+        {
+            // Atomically check and set: only set if current socket is null or closed
+            if (_webSocket == null || _webSocket.State != WebSocketState.Open)
+            {
+                _webSocket = socket;
+                return (true, true);
+            }
+            
+            // Socket is already open - don't overwrite it
+            return (true, false);
+        }
+        finally
+        {
+            _webSocketSemaphore.Release();
+        }
+    }
+    
     // Legacy methods kept for backward compatibility - these are convenience wrappers
     [Obsolete("Use TryGetWebSocketAsync() for clearer timeout vs null distinction")]
     public async Task<WebSocket?> GetWebSocketAsync(CancellationToken cancellationToken = default)

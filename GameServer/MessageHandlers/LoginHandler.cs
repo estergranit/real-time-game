@@ -33,11 +33,23 @@ public class LoginHandler : ILoginHandler
         
         if (existingPlayer != null)
         {
-            // Reconnection: update WebSocket and return existing PlayerId
-            var existingSocket = existingPlayer.GetWebSocket();
-            if (existingSocket != null && existingSocket.State == System.Net.WebSockets.WebSocketState.Open)
+            // Reconnection: atomically check if socket is null/closed and set it
+            // This prevents race conditions where multiple threads try to reconnect simultaneously
+            var (lockSuccess, wasSet) = await existingPlayer.TrySetWebSocketIfNullOrClosedAsync(webSocket);
+            
+            if (!lockSuccess)
             {
-                // Player is already connected with an active WebSocket
+                Log.Warning("Failed to reconnect player {PlayerId} - lock timeout when checking/setting WebSocket", existingPlayer.PlayerId);
+                return new LoginResponse
+                {
+                    Success = false,
+                    PlayerId = string.Empty
+                };
+            }
+            
+            if (!wasSet)
+            {
+                // Socket was already open - another thread connected first or player is already connected
                 Log.Warning("Login rejected - DeviceId already connected: {DeviceId}", request.DeviceId);
                 return new LoginResponse
                 {
@@ -46,17 +58,7 @@ public class LoginHandler : ILoginHandler
                 };
             }
             
-            // Player was disconnected, reconnect them
-            var setSuccess = await existingPlayer.TrySetWebSocketAsync(webSocket);
-            if (!setSuccess)
-            {
-                Log.Warning("Failed to reconnect player {PlayerId} - lock timeout when setting WebSocket", existingPlayer.PlayerId);
-                return new LoginResponse
-                {
-                    Success = false,
-                    PlayerId = string.Empty
-                };
-            }
+            // Successfully reconnected
             Log.Information("Player reconnected: {PlayerId} with DeviceId: {DeviceId}", existingPlayer.PlayerId, request.DeviceId);
             
             return new LoginResponse
