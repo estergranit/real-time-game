@@ -1,57 +1,122 @@
 # Architecture Overview
 
-## System Design
+Current implementation of the Real-Time Game Server.
 
-### Technology Stack
-- **.NET 8**: Target framework
-- **ASP.NET Core**: Minimal API hosting with Kestrel
-- **System.Net.WebSockets**: WebSocket communication (no SignalR)
-- **Serilog**: Structured logging (Console + File sinks)
-- **In-memory storage**: Player state (SQLite optional future enhancement)
+---
 
-### Communication Protocol
-- **Transport**: WebSocket (JSON messages)
-- **Endpoint**: `/ws` on port 8080
-- **Message Format**: JSON-serialized envelopes with type routing
+## 🏗️ Stack
 
-### Message Types
+**Core:**
+- .NET 8, ASP.NET Core Minimal API
+- Raw WebSockets (no SignalR)
+- Serilog for logging
+- In-memory storage
 
-#### 1. Login
-- **Input**: DeviceId (UDID)
-- **Output**: PlayerId
-- **Rules**: Reject duplicate connections with same DeviceId
+**Architecture:** SOLID, DI, interface-based
 
-#### 2. UpdateResources
-- **Input**: ResourceType (coins | rolls), ResourceValue (positive integer)
-- **Output**: Updated balance
-- **Validation**: Only positive increments allowed, reject if balance would go negative
+---
 
-#### 3. SendGift
-- **Input**: FriendPlayerId, ResourceType, ResourceValue
-- **Actions**:
-  - Validate sender has sufficient balance
-  - Deduct from sender atomically
-  - Add to recipient atomically
-  - Send GiftEvent notification if recipient is online
-- **Error**: Reject if sender has insufficient balance
+## 🧩 Components
 
-### Concurrency Model
+### PlayerState
+Thread-safe resource storage with `SemaphoreSlim`:
 
-- **ConnectionManager**: `ConcurrentDictionary` for thread-safe connection tracking
-- **PlayerState**: Lock-based synchronization per player for atomic updates
-- **Gift Transfers**: Ordered locking (by PlayerId) to prevent deadlocks
+```csharp
+private readonly SemaphoreSlim _resourceSemaphore = new(1, 1);
 
-### Design Principles
+public async Task<(bool, int)> TryUpdateBalanceAsync(ResourceType type, int delta)
+{
+    await _semaphore.WaitAsync();
+    try
+    {
+        var balance = _coins + delta;
+        if (balance < 0) return (false, _coins);
+        _coins = balance;
+        return (true, balance);
+    }
+    finally { _semaphore.Release(); }
+}
+```
 
-- **SOLID**: Clean separation of concerns via interfaces
-- **Async/Await**: All I/O operations are asynchronous
-- **Race-condition safety**: Proper locking for shared state
-- **Extensibility**: Easy to add new message handlers
+### ConnectionManager
+Dual `ConcurrentDictionary` lookups:
+- `_playersByDeviceId` → prevent duplicate logins
+- `_playersByPlayerId` → route gifts
 
-## Future Enhancements
-- SQLite persistence for player state
-- Redis for distributed state management
-- Horizontal scaling with load balancing
-- Metrics and performance monitoring
-- Authentication and authorization
+### MessageRouter
+Type-safe routing:
+```csharp
+return envelope.Type switch
+{
+    MessageType.Login => await HandleLoginAsync(envelope, webSocket),
+    MessageType.UpdateResources => await HandleUpdateResourcesAsync(envelope, playerId),
+    MessageType.SendGift => await HandleSendGiftAsync(envelope, playerId),
+    _ => CreateErrorResponse(...)
+};
+```
+
+### WebSocketHandler
+Manages connection lifecycle, JSON serialization, message loop.
+
+---
+
+## 🔒 Concurrency
+
+**Problem:** Race conditions, deadlocks, data loss
+
+**Solutions:**
+1. **SemaphoreSlim** over `lock` (no thread blocking)
+2. **Ordered locking** by PlayerId to avoid circular waits
+3. **Timeouts** on lock acquisition (prevent hangs)
+
+**Gift transfer locking:**
+```csharp
+var first = sender.PlayerId.CompareTo(recipient.PlayerId) < 0 ? sender : recipient;
+var second = first == sender ? recipient : sender;
+
+await first.ResourceSemaphore.WaitAsync();
+try
+{
+    await second.ResourceSemaphore.WaitAsync();
+    try { /* transfer */ }
+    finally { second.ResourceSemaphore.Release(); }
+}
+finally { first.ResourceSemaphore.Release(); }
+```
+
+---
+
+## 📨 Message Flow
+
+**Gift example:**
+1. Client → `SendGift` envelope
+2. Router → GiftHandler
+3. Handler: validate → lock ordered → atomic transfer
+4. If online, notify via ConnectionManager
+5. Response envelope → client
+
+**All messages:** Envelope pattern with type routing and RequestId correlation.
+
+---
+
+## 🧪 Testing
+
+Stress tests in `Test/`:
+- 10 concurrent gifts (balance accuracy)
+- 500+ ops per player (no deadlocks)
+- 50 login races (only 1 succeeds)
+
+---
+
+## 🏛️ Principles
+
+**Async-first:** All I/O is async/await  
+**SOLID:** Clean separation, interfaces  
+**Extensible:** Add handlers without changing router  
+**Thread-safe:** Atomic operations with timeouts
+
+---
+
+**Current state:** Demo-ready, in-memory, single instance  
+**Production gaps:** Persistence, horizontal scaling, auth, metrics
 
