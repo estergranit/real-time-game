@@ -9,12 +9,12 @@ namespace GameServer;
 public class WebSocketHandler
 {
     private readonly ConnectionManager _connectionManager;
-    private readonly MessageRouter _messageRouter;
+    private readonly IMessageRouter _messageRouter;
     
-    public WebSocketHandler(ConnectionManager connectionManager)
+    public WebSocketHandler(ConnectionManager connectionManager, IMessageRouter messageRouter)
     {
         _connectionManager = connectionManager;
-        _messageRouter = new MessageRouter(connectionManager);
+        _messageRouter = messageRouter;
     }
     
     public async Task HandleConnectionAsync(WebSocket webSocket)
@@ -87,9 +87,16 @@ public class WebSocketHandler
         }
         finally
         {
+            // On disconnect, set WebSocket to null but keep player state
+            // This allows offline players to receive gifts and maintain balance
             if (currentPlayerId != null)
             {
-                _connectionManager.RemovePlayer(currentPlayerId);
+                var player = _connectionManager.GetPlayerByPlayerId(currentPlayerId);
+                if (player != null)
+                {
+                    player.WebSocket = null;
+                    Log.Information("Player {PlayerId} disconnected but state preserved", currentPlayerId);
+                }
             }
             
             if (webSocket.State == WebSocketState.Open)

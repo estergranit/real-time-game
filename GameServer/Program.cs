@@ -1,4 +1,5 @@
 using GameServer;
+using GameServer.MessageHandlers;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,6 +19,11 @@ builder.WebHost.ConfigureKestrel(options =>
 
 // Register services
 builder.Services.AddSingleton<ConnectionManager>();
+builder.Services.AddScoped<ILoginHandler, LoginHandler>();
+builder.Services.AddScoped<IResourceHandler, ResourceHandler>();
+builder.Services.AddScoped<IGiftHandler, GiftHandler>();
+builder.Services.AddScoped<IMessageRouter, MessageRouter>();
+builder.Services.AddScoped<WebSocketHandler>();
 
 var app = builder.Build();
 
@@ -29,9 +35,9 @@ app.Map("/ws", async context =>
 {
     if (context.WebSockets.IsWebSocketRequest)
     {
+        using var scope = context.RequestServices.CreateScope();
         var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-        var connectionManager = context.RequestServices.GetRequiredService<ConnectionManager>();
-        var handler = new WebSocketHandler(connectionManager);
+        var handler = scope.ServiceProvider.GetRequiredService<WebSocketHandler>();
         await handler.HandleConnectionAsync(webSocket);
     }
     else

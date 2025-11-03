@@ -6,19 +6,20 @@ using Shared;
 
 namespace GameServer;
 
-public class MessageRouter
+public class MessageRouter : IMessageRouter
 {
-    private readonly ConnectionManager _connectionManager;
-    private readonly LoginHandler _loginHandler;
-    private readonly ResourceHandler _resourceHandler;
-    private readonly GiftHandler _giftHandler;
+    private readonly ILoginHandler _loginHandler;
+    private readonly IResourceHandler _resourceHandler;
+    private readonly IGiftHandler _giftHandler;
     
-    public MessageRouter(ConnectionManager connectionManager)
+    public MessageRouter(
+        ILoginHandler loginHandler,
+        IResourceHandler resourceHandler,
+        IGiftHandler giftHandler)
     {
-        _connectionManager = connectionManager;
-        _loginHandler = new LoginHandler(connectionManager);
-        _resourceHandler = new ResourceHandler(connectionManager);
-        _giftHandler = new GiftHandler(connectionManager);
+        _loginHandler = loginHandler;
+        _resourceHandler = resourceHandler;
+        _giftHandler = giftHandler;
     }
     
     public async Task<MessageEnvelope> RouteMessageAsync(MessageEnvelope envelope, string? currentPlayerId, WebSocket webSocket)
