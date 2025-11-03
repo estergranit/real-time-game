@@ -1,11 +1,12 @@
 using System.Net.WebSockets;
+using System.Threading;
 using Shared;
 
 namespace GameServer;
 
 public class PlayerState
 {
-    private readonly object _lock = new();
+    private readonly SemaphoreSlim _resourceSemaphore = new(1, 1);
     
     public string PlayerId { get; }
     public string DeviceId { get; }
@@ -22,9 +23,10 @@ public class PlayerState
         _rolls = 0;
     }
     
-    public int GetBalance(ResourceType resourceType)
+    public async Task<int> GetBalanceAsync(ResourceType resourceType)
     {
-        lock (_lock)
+        await _resourceSemaphore.WaitAsync();
+        try
         {
             return resourceType switch
             {
@@ -33,11 +35,16 @@ public class PlayerState
                 _ => throw new ArgumentException($"Unknown resource type: {resourceType}")
             };
         }
+        finally
+        {
+            _resourceSemaphore.Release();
+        }
     }
     
-    public bool TryUpdateBalance(ResourceType resourceType, int delta, out int newBalance)
+    public async Task<(bool Success, int NewBalance)> TryUpdateBalanceAsync(ResourceType resourceType, int delta)
     {
-        lock (_lock)
+        await _resourceSemaphore.WaitAsync();
+        try
         {
             var currentBalance = resourceType switch
             {
@@ -45,17 +52,14 @@ public class PlayerState
                 ResourceType.Rolls => _rolls,
                 _ => throw new ArgumentException($"Unknown resource type: {resourceType}")
             };
-            
+
             var calculatedBalance = currentBalance + delta;
-            
-            // Reject if balance would go negative
+
             if (calculatedBalance < 0)
             {
-                newBalance = currentBalance;
-                return false;
+                return (false, currentBalance);
             }
-            
-            // Update the balance
+
             switch (resourceType)
             {
                 case ResourceType.Coins:
@@ -65,10 +69,15 @@ public class PlayerState
                     _rolls = calculatedBalance;
                     break;
             }
-            
-            newBalance = calculatedBalance;
-            return true;
+
+            return (true, calculatedBalance);
+        }
+        finally
+        {
+            _resourceSemaphore.Release();
         }
     }
+
+    internal SemaphoreSlim ResourceSemaphore => _resourceSemaphore;
 }
 

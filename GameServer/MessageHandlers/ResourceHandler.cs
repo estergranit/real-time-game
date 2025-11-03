@@ -14,8 +14,6 @@ public class ResourceHandler : IResourceHandler
     
     public async Task<UpdateResourcesResponse> HandleAsync(UpdateResourcesRequest request)
     {
-        await Task.CompletedTask; // Ensure async signature
-        
         // Validate resource value is positive
         if (request.ResourceValue <= 0)
         {
@@ -42,7 +40,7 @@ public class ResourceHandler : IResourceHandler
         }
         
         // Try to update balance (will reject if would go negative)
-        var success = player.TryUpdateBalance(request.ResourceType, request.ResourceValue, out var newBalance);
+        var (success, newBalance) = await player.TryUpdateBalanceAsync(request.ResourceType, request.ResourceValue);
         
         if (!success)
         {
